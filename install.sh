@@ -337,6 +337,11 @@ install_rtk() {
     content=$(get_rtk_content)
 
     if rule_exists "$file" "$marker"; then
+        # Detectar versión anterior (tabla expandida) y sugerir sobreescribir
+        if grep -qF "| Instead of | Use |" "$file"; then
+            warn "Se detectó la versión anterior (tabla expandida) de RTK."
+            printf "  %s\n" "${DIM}Se recomienda actualizar a la versión comprimida.${NC}"
+        fi
         ask_conflict_action "RTK"
         case "$CONFLICT_ACTION" in
             skip)
@@ -1156,10 +1161,12 @@ main() {
             fi
 
             TOOLS=()
+            local has_claude=false
+            local has_opencode=false
             for idx in "${REPLY_SELECTIONS[@]}"; do
                 case "$idx" in
-                    0) TOOLS+=("claude") ;;
-                    1) TOOLS+=("opencode") ;;
+                    0) TOOLS+=("claude"); has_claude=true ;;
+                    1) TOOLS+=("opencode"); has_opencode=true ;;
                 esac
             done
             step=2
@@ -1251,11 +1258,23 @@ main() {
 
         # ── 4. General rules ──
         4)
-            checkbox_menu "Reglas generales:" \
-                "RTK — Token-Optimized CLI (tabla de comandos)" \
-                ".gitignore respect rule (excepción .env)" \
-                "Expertise (personalizable)" \
-                "PostgreSQL (MCP + credential resolution)"
+            # RTK solo se ofrece si OpenCode está seleccionado
+            # (Claude Code usa hooks rtk-rewrite.sh, no necesita la regla)
+            local -a general_opts=()
+            local -a general_keys=()
+
+            if $has_opencode; then
+                general_opts+=("RTK — Token-Optimized CLI (comprimido)")
+                general_keys+=("rtk")
+            fi
+            general_opts+=(".gitignore respect rule (excepción .env)")
+            general_keys+=("gitignore")
+            general_opts+=("Expertise (personalizable)")
+            general_keys+=("expertise")
+            general_opts+=("PostgreSQL (MCP + credential resolution)")
+            general_keys+=("postgres")
+
+            checkbox_menu "Reglas generales:" "${general_opts[@]}"
 
             if [[ ${#REPLY_SELECTIONS[@]} -gt 0 ]] && [[ "${REPLY_SELECTIONS[0]}" == "__BACK__" ]]; then
                 step=3
@@ -1268,11 +1287,11 @@ main() {
             fi
 
             for idx in "${REPLY_SELECTIONS[@]}"; do
-                case "$idx" in
-                    0) install_rtk=true ;;
-                    1) install_gitignore=true ;;
-                    2) install_expertise=true ;;
-                    3) install_postgres=true ;;
+                case "${general_keys[$idx]}" in
+                    rtk)        install_rtk=true ;;
+                    gitignore)  install_gitignore=true ;;
+                    expertise)  install_expertise=true ;;
+                    postgres)   install_postgres=true ;;
                 esac
             done
 
@@ -1402,9 +1421,13 @@ main() {
 
         printf "\n"
 
-        # 1. RTK
+        # 1. RTK (solo en archivos AGENTS.md — Claude Code usa hooks)
         if $install_rtk; then
-            install_rtk "$target"
+            if [[ "$target" == *"CLAUDE.md" ]]; then
+                info "RTK no se instala en CLAUDE.md (Claude Code usa hooks rtk-rewrite.sh)."
+            else
+                install_rtk "$target"
+            fi
         fi
 
         # 2. .gitignore (once, shared between groups)
