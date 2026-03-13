@@ -1,0 +1,14 @@
+{
+  "postgres": {
+    "command": [
+      "uvx",
+      "postgres-mcp",
+      "--access-mode=unrestricted"
+    ],
+    "enabled": true,
+    "environment": {
+      "DATABASE_URI": "postgresql://tad:tad@localhost:5432/postgres"
+    },
+    "type": "local"
+  }
+}

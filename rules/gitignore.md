@@ -1,0 +1,1 @@
+- ALWAYS respect `.gitignore` in ALL file operations (search, read, list, write, edit) — exclude ignored files/directories (e.g., `node_modules`, `dist`, `.git`). Exception: `.env` files CAN be read when needed for configuration (database connections, environment setup, etc.). Only include other ignored files if the user explicitly asks to.
