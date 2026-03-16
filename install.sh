@@ -8,6 +8,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RULES_DIR="${SCRIPT_DIR}/rules"
+PLUGINS_DIR="${SCRIPT_DIR}/plugins"
 
 # ── Colors (Rose Pine palette) ───────────────
 
@@ -63,19 +64,21 @@ check_rules_dir() {
         error "¿Estás corriendo el script desde el repo clonado?"
         exit 1
     fi
-    for f in rtk.md gitignore.md expertise.md etendo-rules.md etendo-skills.md etendo-expertise.md postgres.md postgres-mcp.json orchestrator-optimized.md; do
+    for f in gitignore.md expertise.md etendo-rules.md etendo-skills.md etendo-expertise.md postgres.md postgres-mcp.json orchestrator-optimized.md; do
         if [[ ! -f "${RULES_DIR}/${f}" ]]; then
             error "Falta el archivo de regla: rules/${f}"
+            exit 1
+        fi
+    done
+    for f in rtk.ts tool-compressor.ts; do
+        if [[ ! -f "${PLUGINS_DIR}/${f}" ]]; then
+            error "Falta el archivo de plugin: plugins/${f}"
             exit 1
         fi
     done
 }
 
 # ── Rule content loaders ─────────────────────
-
-get_rtk_content() {
-    cat "${RULES_DIR}/rtk.md"
-}
 
 get_gitignore_content() {
     cat "${RULES_DIR}/gitignore.md"
@@ -343,57 +346,6 @@ ensure_file() {
 }
 
 # ── Per-rule installers ──────────────────────
-
-install_rtk() {
-    local file="$1"
-    local marker="## RTK"
-    local content
-    content=$(get_rtk_content)
-
-    if rule_exists "$file" "$marker"; then
-        # Detectar versión anterior (tabla expandida) y sugerir sobreescribir
-        if grep -qF "| Instead of | Use |" "$file"; then
-            warn "Se detectó la versión anterior (tabla expandida) de RTK."
-            printf "  %s\n" "${DIM}Se recomienda actualizar a la versión comprimida.${NC}"
-        fi
-        ask_conflict_action "RTK"
-        case "$CONFLICT_ACTION" in
-            skip)
-                info "Saltando RTK."
-                return 0
-                ;;
-            overwrite)
-                replace_block_inplace "$file" "$marker" "$content" "replace"
-                success "RTK sobreescrito (misma posición)."
-                INSTALLED_RULES+=("RTK — Token-Optimized CLI (sobreescrito)")
-                return 0
-                ;;
-            extend)
-                local extra_text
-                extra_text=$(printf "%s" "$content" | tail -n +3)
-                replace_block_inplace "$file" "$marker" "$extra_text" "extend"
-                success "RTK extendido."
-                INSTALLED_RULES+=("RTK — Token-Optimized CLI (extendido)")
-                return 0
-                ;;
-        esac
-    fi
-
-    # New install: RTK goes at the top of the file
-    # New section → blank line after if content follows
-    if [[ -s "$file" ]]; then
-        local tmp
-        tmp=$(mktemp)
-        printf "%s\n\n" "$content" > "$tmp"
-        cat "$file" >> "$tmp"
-        mv "$tmp" "$file"
-    else
-        printf "%s\n" "$content" > "$file"
-    fi
-
-    success "RTK instalado."
-    INSTALLED_RULES+=("RTK — Token-Optimized CLI")
-}
 
 install_gitignore() {
     local file="$1"
@@ -1035,6 +987,42 @@ install_orchestrator() {
     INSTALLED_RULES+=("Orchestrator optimized — Result Contract")
 }
 
+# ── Plugin installer ─────────────────────────
+
+install_plugin() {
+    local plugin_file="$1"
+    local plugin_name="$2"
+    local target_dir="${HOME}/.config/opencode/plugins"
+    local target_file="${target_dir}/$(basename "$plugin_file")"
+
+    mkdir -p "$target_dir"
+
+    if [[ -f "$target_file" ]]; then
+        warn "El plugin '${plugin_name}' ya existe en ${target_file}."
+        printf "  %s Sobreescribir (reemplazar por la nueva versión)\n" "${CYAN}[s]${NC}"
+        printf "  %s Saltear (no tocar)\n" "${CYAN}[n]${NC}"
+        ask "¿Qué hacemos? (s/n):"
+        local resp
+        read -r resp
+        case "$resp" in
+            s|S)
+                cp "$plugin_file" "$target_file"
+                success "${plugin_name} sobreescrito → ${target_file}"
+                INSTALLED_PLUGINS+=("${plugin_name} (sobreescrito) → ${target_file}")
+                return 0
+                ;;
+            *)
+                info "Saltando ${plugin_name}."
+                return 0
+                ;;
+        esac
+    fi
+
+    cp "$plugin_file" "$target_file"
+    success "${plugin_name} instalado → ${target_file}"
+    INSTALLED_PLUGINS+=("${plugin_name} → ${target_file}")
+}
+
 # ── Interactive checkbox ─────────────────────
 
 # Displays a checkbox menu and stores selections in REPLY_SELECTIONS.
@@ -1204,7 +1192,6 @@ main() {
     local step=1
 
     # Selection variables (declared outside loop for persistence)
-    local install_rtk=false
     local install_gitignore=false
     local install_expertise=false
     local install_postgres=false
@@ -1215,6 +1202,9 @@ main() {
     local install_etendo_postgres=false
     local group_general=false
     local group_etendo=false
+    local group_plugins=false
+    local install_rtk_plugin=false
+    local install_compressor_plugin=false
 
     while true; do
         case $step in
@@ -1290,9 +1280,20 @@ main() {
 
         # ── 3. Rule group selection ──
         3)
-            checkbox_menu "¿Qué grupo de reglas querés instalar?" \
-                "General (RTK, .gitignore, Expertise)" \
-                "Etendo/Openbravo (reglas ERP, skills, expertise backend)"
+            local -a group_opts=()
+            local -a group_keys=()
+
+            group_opts+=("General (.gitignore, Expertise)")
+            group_keys+=("general")
+            group_opts+=("Etendo/Openbravo (reglas ERP, skills, expertise backend)")
+            group_keys+=("etendo")
+
+            if $has_opencode; then
+                group_opts+=("OpenCode Plugins (RTK rewrite, Tool Compressor)")
+                group_keys+=("plugins")
+            fi
+
+            checkbox_menu "¿Qué grupo de reglas querés instalar?" "${group_opts[@]}"
 
             if [[ ${#REPLY_SELECTIONS[@]} -gt 0 ]] && [[ "${REPLY_SELECTIONS[0]}" == "__BACK__" ]]; then
                 step=2
@@ -1306,16 +1307,17 @@ main() {
 
             group_general=false
             group_etendo=false
+            group_plugins=false
 
             for idx in "${REPLY_SELECTIONS[@]}"; do
-                case "$idx" in
-                    0) group_general=true ;;
-                    1) group_etendo=true ;;
+                case "${group_keys[$idx]}" in
+                    general) group_general=true ;;
+                    etendo)  group_etendo=true ;;
+                    plugins) group_plugins=true ;;
                 esac
             done
 
             # Reset individual rule selections
-            install_rtk=false
             install_gitignore=false
             install_expertise=false
             install_postgres=false
@@ -1324,25 +1326,23 @@ main() {
             install_etendo_gitignore=false
             install_etendo_expertise=false
             install_etendo_postgres=false
+            install_rtk_plugin=false
+            install_compressor_plugin=false
 
             if $group_general; then
                 step=4
             elif $group_etendo; then
                 step=5
+            elif $group_plugins; then
+                step=6
             fi
             ;;
 
         # ── 4. General rules ──
         4)
-            # RTK solo se ofrece si OpenCode está seleccionado
-            # (Claude Code usa hooks rtk-rewrite.sh, no necesita la regla)
             local -a general_opts=()
             local -a general_keys=()
 
-            if $has_opencode; then
-                general_opts+=("RTK — Token-Optimized CLI (comprimido)")
-                general_keys+=("rtk")
-            fi
             general_opts+=(".gitignore respect rule (excepción .env)")
             general_keys+=("gitignore")
             general_opts+=("Expertise (personalizable)")
@@ -1366,7 +1366,6 @@ main() {
 
             for idx in "${REPLY_SELECTIONS[@]}"; do
                 case "${general_keys[$idx]}" in
-                    rtk)          install_rtk=true ;;
                     gitignore)    install_gitignore=true ;;
                     expertise)    install_expertise=true ;;
                     postgres)     install_postgres=true ;;
@@ -1374,12 +1373,14 @@ main() {
                 esac
             done
 
-            # If Etendo group is also selected, go to that menu
+            # Navigate to next applicable group
             if $group_etendo; then
                 step=5
-            else
-                # Exit wizard, continue with customization
+            elif $group_plugins; then
                 step=6
+                continue
+            else
+                step=7
                 continue
             fi
             ;;
@@ -1416,12 +1417,50 @@ main() {
                 esac
             done
 
-            step=6
+            if $group_plugins; then
+                step=6
+                continue
+            else
+                step=7
+                continue
+            fi
+            ;;
+
+        # ── 6. OpenCode Plugins ──
+        6)
+            checkbox_menu "Plugins de OpenCode:" \
+                "RTK Plugin — Reescribe comandos bash via RTK para ahorrar tokens" \
+                "Tool Compressor Plugin — Comprime definiciones de herramientas (3 capas)"
+
+            if [[ ${#REPLY_SELECTIONS[@]} -gt 0 ]] && [[ "${REPLY_SELECTIONS[0]}" == "__BACK__" ]]; then
+                if $group_etendo; then
+                    step=5
+                elif $group_general; then
+                    step=4
+                else
+                    step=3
+                fi
+                continue
+            fi
+
+            if [[ ${#REPLY_SELECTIONS[@]} -eq 0 ]]; then
+                warn "Seleccioná al menos un plugin."
+                continue
+            fi
+
+            for idx in "${REPLY_SELECTIONS[@]}"; do
+                case "$idx" in
+                    0) install_rtk_plugin=true ;;
+                    1) install_compressor_plugin=true ;;
+                esac
+            done
+
+            step=7
             continue
             ;;
 
-        # ── 6. Expertise customization ──
-        6)
+        # ── 7. Expertise customization ──
+        7)
             CUSTOM_EXPERTISE=""
             CUSTOM_ETENDO_EXPERTISE=""
 
@@ -1467,7 +1506,7 @@ main() {
         esac
     done
 
-    # ── 7. Installation ──
+    # ── 8. Installation ──
 
     # Consolidate .gitignore: if selected in both groups, install only once
     local do_install_gitignore=false
@@ -1500,42 +1539,33 @@ main() {
 
         printf "\n"
 
-        # 1. RTK (solo en archivos AGENTS.md — Claude Code usa hooks)
-        if $install_rtk; then
-            if [[ "$target" == *"CLAUDE.md" ]]; then
-                info "RTK no se instala en CLAUDE.md (Claude Code usa hooks rtk-rewrite.sh)."
-            else
-                install_rtk "$target"
-            fi
-        fi
-
-        # 2. .gitignore (once, shared between groups)
+        # 1. .gitignore (once, shared between groups)
         if $do_install_gitignore; then
             install_gitignore "$target"
         fi
 
-        # 3. Expertise general
+        # 2. Expertise general
         if $install_expertise; then
             install_expertise "$target"
         fi
 
-        # 4. Etendo rules (exclusion in ## Rules) + skills (own section)
+        # 3. Etendo rules (exclusion in ## Rules) + skills (own section)
         if $install_etendo; then
             install_etendo_rules "$target"
             install_etendo_skills "$target"
         fi
 
-        # 5. Etendo expertise
+        # 4. Etendo expertise
         if $install_etendo_expertise; then
             install_etendo_expertise "$target"
         fi
 
-        # 6. PostgreSQL (once, shared between groups)
+        # 5. PostgreSQL (once, shared between groups)
         if $do_install_postgres; then
             install_postgres "$target"
         fi
 
-        # 7. Orchestrator optimized
+        # 6. Orchestrator optimized
         if $install_orchestrator_flag; then
             install_orchestrator "$target"
         fi
@@ -1558,6 +1588,28 @@ main() {
             printf "\n"
         fi
     done
+
+    # ── Plugin installation (OpenCode only) ──
+    INSTALLED_PLUGINS=()
+
+    if $install_rtk_plugin; then
+        install_plugin "${PLUGINS_DIR}/rtk.ts" "RTK Plugin"
+    fi
+
+    if $install_compressor_plugin; then
+        install_plugin "${PLUGINS_DIR}/tool-compressor.ts" "Tool Compressor Plugin"
+    fi
+
+    # Plugin summary
+    if [[ ${#INSTALLED_PLUGINS[@]} -gt 0 ]]; then
+        printf "%s\n" "${GREEN}${BOLD}────────────────────────────────────${NC}"
+        printf "%s\n" "${GREEN}${BOLD}  Plugins instalados${NC}"
+        printf "%s\n" "${GREEN}${BOLD}────────────────────────────────────${NC}"
+        for plugin in "${INSTALLED_PLUGINS[@]}"; do
+            printf "    %s %s\n" "${GREEN}✔${NC}" "${plugin}"
+        done
+        printf "\n"
+    fi
 
     # PostgreSQL MCP config: install once per tool, outside the file loop
     if $do_install_postgres && ! $postgres_mcp_installed; then
