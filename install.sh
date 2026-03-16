@@ -254,6 +254,16 @@ replace_block_inplace() {
     local in_block=0
     local done_block=0
 
+    # Derive end-of-block pattern from marker level:
+    # "## Foo" → stop at "## "; "### Foo" → stop at "## " or "### "
+    local marker_hashes="${start_marker%%[^#]*}"
+    local end_of_block_re
+    if [[ ${#marker_hashes} -ge 3 ]]; then
+        end_of_block_re='^###?[[:space:]]'
+    else
+        end_of_block_re='^##[[:space:]]'
+    fi
+
     # For extend mode: buffer existing block lines
     local -a existing_lines=()
 
@@ -271,8 +281,8 @@ replace_block_inplace() {
         fi
 
         if [[ $in_block -eq 1 ]]; then
-            # Detect end of block: next ## section
-            if [[ "$line" =~ ^##\  ]]; then
+            # Detect end of block: next section at same or higher level
+            if [[ "$line" =~ $end_of_block_re ]]; then
                 in_block=0
                 done_block=1
                 if [[ "$mode" == "extend" ]]; then
@@ -986,7 +996,7 @@ install_orchestrator() {
                 ;;
             extend)
                 local extra_text
-                extra_text=$(printf "%s" "$content" | tail -n +3)
+                extra_text=$(printf "%s" "$content" | tail -n +2)
                 replace_block_inplace "$file" "$marker" "$extra_text" "extend"
                 success "Orchestrator optimized extendido."
                 INSTALLED_RULES+=("Orchestrator optimized — Result Contract (extendido)")
