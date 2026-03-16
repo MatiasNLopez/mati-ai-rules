@@ -63,7 +63,7 @@ check_rules_dir() {
         error "¿Estás corriendo el script desde el repo clonado?"
         exit 1
     fi
-    for f in rtk.md gitignore.md expertise.md etendo-rules.md etendo-skills.md etendo-expertise.md postgres.md postgres-mcp.json; do
+    for f in rtk.md gitignore.md expertise.md etendo-rules.md etendo-skills.md etendo-expertise.md postgres.md postgres-mcp.json orchestrator-optimized.md; do
         if [[ ! -f "${RULES_DIR}/${f}" ]]; then
             error "Falta el archivo de regla: rules/${f}"
             exit 1
@@ -111,6 +111,10 @@ get_postgres_content() {
 
 get_postgres_mcp_config() {
     cat "${RULES_DIR}/postgres-mcp.json"
+}
+
+get_orchestrator_content() {
+    cat "${RULES_DIR}/orchestrator-optimized.md"
 }
 
 # ── Installation functions ───────────────────
@@ -961,6 +965,66 @@ install_postgres_mcp() {
     INSTALLED_RULES+=("PostgreSQL MCP")
 }
 
+install_orchestrator() {
+    local file="$1"
+    local marker="### Result Contract"
+    local content
+    content=$(get_orchestrator_content)
+
+    if rule_exists "$file" "$marker"; then
+        ask_conflict_action "Orchestrator optimized (Result Contract)"
+        case "$CONFLICT_ACTION" in
+            skip)
+                info "Saltando Orchestrator optimized."
+                return 0
+                ;;
+            overwrite)
+                replace_block_inplace "$file" "$marker" "$content" "replace"
+                success "Orchestrator optimized sobreescrito (misma posición)."
+                INSTALLED_RULES+=("Orchestrator optimized — Result Contract (sobreescrito)")
+                return 0
+                ;;
+            extend)
+                local extra_text
+                extra_text=$(printf "%s" "$content" | tail -n +3)
+                replace_block_inplace "$file" "$marker" "$extra_text" "extend"
+                success "Orchestrator optimized extendido."
+                INSTALLED_RULES+=("Orchestrator optimized — Result Contract (extendido)")
+                return 0
+                ;;
+        esac
+    fi
+
+    # New install: insert before ### Sub-Agent Launch Pattern if ## SDD Workflow exists
+    if grep -q "^## SDD Workflow" "$file"; then
+        if grep -q "### Sub-Agent Launch Pattern" "$file"; then
+            local tmp
+            tmp=$(mktemp)
+            local inserted=0
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                if [[ $inserted -eq 0 ]] && [[ "$line" == "### Sub-Agent Launch Pattern"* ]]; then
+                    printf "%s\n\n" "$content" >> "$tmp"
+                    inserted=1
+                fi
+                printf "%s\n" "$line" >> "$tmp"
+            done < "$file"
+            if [[ $inserted -eq 0 ]]; then
+                printf "\n%s\n" "$content" >> "$tmp"
+            fi
+            mv "$tmp" "$file"
+        else
+            # SDD Workflow exists but no Sub-Agent Launch Pattern — append inside section
+            printf "\n%s\n" "$content" >> "$file"
+        fi
+    else
+        # No SDD Workflow section — append as new section
+        printf "\n%s\n" "$content" >> "$file"
+    fi
+
+    success "Orchestrator optimized instalado."
+    INSTALLED_RULES+=("Orchestrator optimized — Result Contract")
+}
+
 # ── Interactive checkbox ─────────────────────
 
 # Displays a checkbox menu and stores selections in REPLY_SELECTIONS.
@@ -1134,6 +1198,7 @@ main() {
     local install_gitignore=false
     local install_expertise=false
     local install_postgres=false
+    local install_orchestrator_flag=false
     local install_etendo=false
     local install_etendo_gitignore=false
     local install_etendo_expertise=false
@@ -1244,6 +1309,7 @@ main() {
             install_gitignore=false
             install_expertise=false
             install_postgres=false
+            install_orchestrator_flag=false
             install_etendo=false
             install_etendo_gitignore=false
             install_etendo_expertise=false
@@ -1273,6 +1339,8 @@ main() {
             general_keys+=("expertise")
             general_opts+=("PostgreSQL (MCP + credential resolution)")
             general_keys+=("postgres")
+            general_opts+=("Orchestrator optimized (Result Contract conciso)")
+            general_keys+=("orchestrator")
 
             checkbox_menu "Reglas generales:" "${general_opts[@]}"
 
@@ -1288,10 +1356,11 @@ main() {
 
             for idx in "${REPLY_SELECTIONS[@]}"; do
                 case "${general_keys[$idx]}" in
-                    rtk)        install_rtk=true ;;
-                    gitignore)  install_gitignore=true ;;
-                    expertise)  install_expertise=true ;;
-                    postgres)   install_postgres=true ;;
+                    rtk)          install_rtk=true ;;
+                    gitignore)    install_gitignore=true ;;
+                    expertise)    install_expertise=true ;;
+                    postgres)     install_postgres=true ;;
+                    orchestrator) install_orchestrator_flag=true ;;
                 esac
             done
 
@@ -1454,6 +1523,11 @@ main() {
         # 6. PostgreSQL (once, shared between groups)
         if $do_install_postgres; then
             install_postgres "$target"
+        fi
+
+        # 7. Orchestrator optimized
+        if $install_orchestrator_flag; then
+            install_orchestrator "$target"
         fi
 
         printf "\n"

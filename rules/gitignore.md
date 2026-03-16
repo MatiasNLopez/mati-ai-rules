@@ -1,1 +1,4 @@
 - ALWAYS respect `.gitignore` in ALL file operations (search, read, list, write, edit) — exclude ignored files/directories (e.g., `node_modules`, `dist`, `.git`). Exception: `.env` files CAN be read when needed for configuration (database connections, environment setup, etc.). Only include other ignored files if the user explicitly asks to.
+- Responses must be as concise as possible by default. Only provide detailed/verbose/explanatory responses when user explicitly requests it via --verbose, --explicativo, or --detallado flags.
+- For file editing: Read the full file before editing, unless you already know the exact target line (via Grep or prior context). For searching: always use Grep/search (with rtk) first. If no results, retry up to 3 times with different patterns before falling back to a full file Read.
+- Never summarize tool results back to the user. State the conclusion or next action, not what the tool returned.
